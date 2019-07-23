@@ -1,0 +1,110 @@
+@NAME(buscar_dados_cedente)
+	    select  top 1 c.identificador id, 
+			    c.nome,
+				c.identificador cnpj, 
+				pe.email as email,
+				pe.telefone as telefone, 
+				pe.logradouro as logradouro,
+				pe.complemento as complemento, 
+				pe.bairro as bairro, 
+				pe.cidade as cidade,
+				pe.uf as uf,
+				pe.cep as cep
+		from dw_nova_srm_refactor.dbo.cliente c 
+			inner join dw_nova_srm_refactor.dbo.pessoa pe on pe.identificador = c.identificador
+			left join netfactor.dbo.nfcedenterepresentante re on re.cedcodigo = c.codigo_cedente
+		Where c.identificador =:id
+		order by c.identificador, 
+			     c.nome
+			     
+@NAME(buscar_titulos)
+
+		 select c.identificador as id, 
+			    c.nome ,
+				p.sigla as siglaProduto, 
+				gh.grupo_nivel3  as filialGerente,
+				case when g.nome = 'M18 ADMINISTRACAO DE RECURSOS E FINANCAS LTDA' then 'M18'
+			    else g.nome
+				end as nome_gerente,
+				'TRUSTHUB' as empresaCobranca,
+		        count(ft.identificador_cliente) qtdTitulos,
+				sum(ftvencido.valor_de_face) totalVencido,
+				datediff(day,max(ftvencido.data_vencimento), getdate()) diasAtrasoUltimoVencimento,
+				isnull(sum(ftvincendo.valor_de_face), 0) totalVincendo 
+		from dw_nova_srm_refactor.dbo.fato_titulo  ft
+		left join dw_nova_srm_refactor.dbo.fato_titulo  ftvencido on ftvencido.codigo_empresa =  ft.codigo_empresa 
+				                                                  and ftvencido.codigo_operacao = ft.codigo_operacao 
+																  and ftvencido.codigo_produto =  ft.codigo_produto
+																  and ftvencido.id = ft.id
+																  and ftvencido.codigo = ft.codigo
+																  and ftvencido.identificador_cliente =  ft.identificador_cliente
+																  and ftvencido.data_vencimento < cast(getdate() as date)
+		left join dw_nova_srm_refactor.dbo.fato_titulo  ftvincendo on ftvincendo.codigo_empresa =  ft.codigo_empresa 
+				                                                  and ftvincendo.codigo_operacao = ft.codigo_operacao 
+																  and ftvincendo.codigo_produto =  ft.codigo_produto
+																  and ftvincendo.id = ft.id
+																  and ftvincendo.codigo = ft.codigo
+																  and ftvincendo.identificador_cliente =  ft.identificador_cliente
+																  and ftvincendo.data_vencimento >= cast(getdate() as date)
+        @IF(:idCedente)
+            inner join dw_nova_srm_refactor.dbo.cliente c on c.identificador = ft.identificador_cliente_sacado
+        @IF(:idSacado)        
+            inner join dw_nova_srm_refactor.dbo.cliente c on c.identificador = ft.identificador_cliente        
+		inner join dw_nova_srm_refactor.dbo.produto p on p.codigo = ft.codigo_produto
+		inner join dw_nova_srm_refactor.dbo.grupo_hierarquia gh on gh.id = ft.codigo_filial
+		inner join dw_nova_srm_refactor.dbo.gerente g on g.identificador = ft.identificador_gerente_migrado
+		where ft.status_liquidacao = 'aberto'
+		  and ft.codigo_produto in ('010383', '010180') 
+		  and ft.cobranca_simples = 0
+		@IF(:idCedente)   
+		  and ft.identificador_cliente =:idCedente
+		group by c.identificador , 
+			    c.nome ,
+				p.sigla, 
+				gh.grupo_nivel3,
+				g.nome 			
+	    having sum(ftvencido.valor_de_face) IS NOT NULL     
+	    
+@NAME(buscar_titulos_detalhe)
+
+		select ft.codigo as idTitulo, 
+		       'INS' as fdc,
+		       ft.descricao_situacao as situacao,
+			   ft.status_liquidacao as status,
+			   ft.data_operacao dataOperacao,
+			   ft.data_vencimento dataVencimento,
+			   datediff(day,ft.data_vencimento, getdate()) diasAtraso,
+			   ft.valor_de_face valorFace,
+			   ft.valor_juros valorJuros,
+			   isnull(ft.valor_de_face,0) + isnull(ft.valor_de_face,0) valorTotal
+		from dw_nova_srm_refactor.dbo.fato_titulo  ft
+		where ft.identificador_cliente_sacado =:idSacado
+		 and ft.status_liquidacao = 'aberto'
+		 and ft.codigo_produto in ('010383', '010180') 
+		 and ft.cobranca_simples = 0	
+	    order by ft.data_vencimento
+	    
+@NAME(buscar_pendencias_titulos)
+
+        select isnull(codigo_evento,0) as idevento, 
+		       descricao_evento as descricaoEvento, 
+			   valor_original as valor
+		from dw_nova_srm_refactor.dbo.pendencia p
+		inner join fato_titulo ft on p.codigo_titulo = ft.codigo
+		                         and ft.identificador_cliente = p.identificador
+		where ft.data_vencimento < cast(getdate() as date) 
+		  and ft.codigo_produto in ('010383', '010180', '010384') 
+		  and ft.identificador_cliente_sacado = :idSacado
+		  and ft.identificador_cliente = :idCedente
+		  and ft.cobranca_simples = '0'
+		union all
+		select isnull(codigo_evento,0) as idevento,
+			   case when descricao_evento is null then 'outros'
+		       else descricao_evento end
+			   descricaoEvento, 
+			   valor_original as valor
+		from dw_nova_srm_refactor.dbo.pendencia p
+		where p.identificador = :idCedente
+		  and codigo_titulo is null 
+        	    
+	     
